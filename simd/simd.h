@@ -20,5 +20,6 @@ typedef struct simd_input simd_input;
 
 simd_input fill_input(const uint8_t *ptr);
 uint64_t cmp_mask_against_input(simd_input in, uint8_t m);
+uint64_t carryless_multiply(uint64_t x, uint64_t y);
 
 #endif /* simd_h */

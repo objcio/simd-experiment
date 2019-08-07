@@ -23,3 +23,14 @@ simd_input fill_input(const uint8_t *ptr) {
     in.hi = _mm256_loadu_si256((const __m256i *)(ptr + 32));
     return in;
 }
+
+uint64_t carryless_multiply(uint64_t x, uint64_t y) {
+    // this creates a 2-element long long vector from a uint64_t by setting the upper half to zero
+    __m128i a = _mm_set_epi64x(0ULL, x);
+    __m128i b = _mm_set_epi64x(0ULL, y);
+    // https://software.intel.com/sites/default/files/managed/72/cc/clmul-wp-rev-2.02-2014-04-20.pdf
+    // last argument 0 means that bits 0:63 from the two 128 bit inputs will be used
+    __m128i res = _mm_clmulepi64_si128(a, b, 0);
+    return _mm_cvtsi128_si64(res);
+}
+

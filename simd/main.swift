@@ -46,10 +46,10 @@ extension Data {
     }
 }
 
-func controlCharacterMask(for data: Data, inQuotes: inout Bool) -> (commas: UInt64, newlines: UInt64) {
-    let (q, c, n): (UInt64, UInt64, UInt64) = data.withUnsafeBytes { bytes in
-        return (cmp_mask_against_input(bytes, 34), cmp_mask_against_input(bytes, 44), cmp_mask_against_input(bytes, 10))
-    }
+func controlCharacterMask(for data: UnsafePointer<UInt8>, inQuotes: inout Bool) -> (commas: UInt64, newlines: UInt64) {
+    let q = cmp_mask_against_input(data, 34)
+    let c = cmp_mask_against_input(data, 44)
+    let n = cmp_mask_against_input(data, 10)
 
     let s = q & ~(q << 1)
 
@@ -79,35 +79,68 @@ func controlCharacterMask(for data: Data, inQuotes: inout Bool) -> (commas: UInt
     return (cq, nq)
 }
 
+
+public func parseCSV(data: Data) -> [[String]] {
+    var commas: [Int] = []
+    commas.reserveCapacity(1000)
+    var newlines: [Int] = []
+    newlines.reserveCapacity(1000)
+    var inQuotes = false
+
+    data.withUnsafeBytes { buf in
+        for start in stride(from: 0, to: buf.count, by: 64) {
+            let end = min(buf.count, start + 64)
+            var ptr = buf.baseAddress!.assumingMemoryBound(to: UInt8.self) + start
+            if end - start < 64 {
+                let new = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
+                new.initialize(repeating: 0, count: 64)
+                new.assign(from: buf.baseAddress!.assumingMemoryBound(to: UInt8.self) + start, count: end - start)
+                ptr = UnsafePointer(new)
+            }
+            let result = controlCharacterMask(for: ptr, inQuotes: &inQuotes)
+            commas.append(contentsOf: result.commas.oneIndices(offset: start))
+            newlines.append(contentsOf: result.newlines.oneIndices(offset: start))
+        }
+    }
+
+    var commas2 = commas[...] + [data.count]
+    var result: [[String]] = []
+    result.reserveCapacity(1000)
+    var lineStart = 0
+    for lineEnd in newlines + [data.count] {
+        guard lineStart < lineEnd else { break }
+        var fields: [String] = []
+        fields.reserveCapacity(16)
+        var fieldStart = lineStart
+        while let commaIdx = commas2.first, commaIdx <= lineEnd {
+            fields.append(String(data: data[fieldStart..<commaIdx], encoding: .utf8)!)
+            commas2.removeFirst()
+            fieldStart = commaIdx + 1
+        }
+        result.append(fields)
+        lineStart = lineEnd + 1
+    }
+    return result
+}
+
+import AppKit
+
+@discardableResult
+func measure<A>(name: String = "", _ block: () -> A) -> A {
+    let startTime = CACurrentMediaTime()
+    let result = block()
+    let timeElapsed = CACurrentMediaTime() - startTime
+    print("Time: \(name) - \(timeElapsed)")
+    return result
+}
+
 let csv = #"""
 "Fiel,d 1","Field with ""quotes""","""""qu,otes""""","kajhsdkahdakshdkajdhkj",",,,,"
 "Another line", "with , commas, in fields", "and ""escaped quotes"""
 """#
 //let data = csv.data(using: .ascii)!
 let data = try! Data(contentsOf: URL(fileURLWithPath: "/Users/florian/Downloads/stops.txt"))
-
-var commas: [Int] = []
-commas.reserveCapacity(1000)
-var newlines: [Int] = []
-newlines.reserveCapacity(1000)
-var inQuotes = false
-
-for start in stride(from: 0, to: data.count, by: 64) {
-    let end = min(data.count, start + 64)
-    let chunk = data[start..<end].paddedPrefix(64)
-    let result = controlCharacterMask(for: chunk, inQuotes: &inQuotes)
-    commas.append(contentsOf: result.commas.oneIndices(offset: start))
-    newlines.append(contentsOf: result.newlines.oneIndices(offset: start))
+measure {
+    _ = parseCSV(data: data)
 }
-
-//print(newlines)
-//print(commas)
-
-//print(csv)
-
-var result: [String] = []
-for range in zip([0] + commas.map { $0 + 1 }, commas + [data.count]) {
-//    print(range)
-    result.append(String(data: data[range.0..<range.1], encoding: .utf8)!)
-}
-print(result.count)
+//dump(parseCSV(data: data))
